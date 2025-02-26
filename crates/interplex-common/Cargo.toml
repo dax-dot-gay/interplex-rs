@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+chrono = { version = "0.4.40", features = ["serde"] }
+derive_builder = "0.20.2"
+heed = "0.21.0"
 libp2p = { version = "0.55.0", features = ["full"] }
-redb = "2.2.0"
 serde = { version = "1.0.218", features = ["derive"] }
+serde_cbor = "0.11.2"
+thiserror = "2.0.11"
