@@ -1,0 +1,9 @@
+[package]
+name = "interplex-common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libp2p = { version = "0.55.0", features = ["full"] }
+redb = "2.2.0"
+serde = { version = "1.0.218", features = ["derive"] }
