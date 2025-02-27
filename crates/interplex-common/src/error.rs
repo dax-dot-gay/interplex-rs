@@ -18,7 +18,7 @@ pub enum InterplexError {
     Unknown(String),
 
     #[error("{0}")]
-    Wrapped(String),
+    Wrapped(String)
 }
 
 impl InterplexError {

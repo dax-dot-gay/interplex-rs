@@ -15,20 +15,11 @@ use heed::{
     Database, Env, EnvFlags, EnvOpenOptions, RoTxn, RwTxn,
 };
 use libp2p::{
-    request_response::{self, ProtocolSupport},
-    swarm::{NetworkBehaviour, THandlerInEvent, ToSwarm},
-    Multiaddr, StreamProtocol,
+    futures::ready, request_response::{self, ProtocolSupport}, swarm::{NetworkBehaviour, THandlerInEvent, ToSwarm}, Multiaddr, StreamProtocol
 };
 use serde::{Deserialize, Serialize};
 
-use super::message::{RendezvousRequest, RendezvousResponse};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Registration {
-    pub identity: NodeIdentifier,
-    pub addresses: Vec<Multiaddr>,
-    pub last_registration: DateTime<Utc>,
-}
+use super::{message::{RendezvousRequest, RendezvousResponse}, registrations::Registration};
 
 #[derive(Builder, Clone, Debug)]
 #[builder(setter(into, strip_option))]
@@ -206,6 +197,7 @@ impl Behavior {
 
     fn clean(&self) -> IResult<Vec<Registration>> {
         let (db, txn) = self.ro()?;
+        db.get_greater_than(txn, key)
         let mut to_clean: Vec<Registration> = Vec::new();
         for item in db.iter(&txn).or_else(|e| Err(InterplexError::wrap(e)))? {
             if let Ok((_, registration)) = item {

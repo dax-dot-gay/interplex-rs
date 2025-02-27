@@ -66,7 +66,7 @@ impl NodeIdentifier {
 
     pub fn key(&self) -> String {
         format!(
-            "{}/{}::{}",
+            "{}/{}/{}",
             self.namespace.clone(),
             self.group(),
             self.peer_id.to_string()
