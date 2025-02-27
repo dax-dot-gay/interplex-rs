@@ -1,67 +1,38 @@
-use std::{
-    ops::Deref,
-    path::Path,
-    task::{Context, Poll},
-};
+use std::
+    task::{Context, Poll}
+;
 
 use crate::{
-    error::{IResult, InterplexError},
+    error::InterplexError,
     identification::NodeIdentifier,
 };
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{TimeDelta, Utc};
 use derive_builder::Builder;
-use heed::{
-    types::{SerdeBincode, Str},
-    Database, Env, EnvFlags, EnvOpenOptions, RoTxn, RwTxn,
-};
 use libp2p::{
-    futures::ready, request_response::{self, ProtocolSupport}, swarm::{NetworkBehaviour, THandlerInEvent, ToSwarm}, Multiaddr, StreamProtocol
+    request_response::{self, ProtocolSupport}, swarm::{NetworkBehaviour, THandlerInEvent, ToSwarm}, Multiaddr, PeerId, StreamProtocol
 };
-use serde::{Deserialize, Serialize};
 
-use super::{message::{RendezvousRequest, RendezvousResponse}, registrations::Registration};
+use super::{message::{RendezvousCommand, RendezvousRequest, RendezvousResponse}, registrations::{Registration, Registrations}};
 
 #[derive(Builder, Clone, Debug)]
 #[builder(setter(into, strip_option))]
 pub struct Config {
-    environment: Env,
+    database: String,
 
     #[builder(default = "chrono::TimeDelta::hours(12)")]
     max_lifetime: TimeDelta,
-
-    #[builder(default = "Some(128)")]
-    max_addresses: Option<u64>,
-
-    #[builder(default)]
-    allowed_namespaces: Option<Vec<String>>,
-
-    #[builder(default = "chrono::TimeDelta::minutes(5)")]
-    clean_interval: TimeDelta,
-}
-
-impl ConfigBuilder {
-    pub fn database(&mut self, path: impl AsRef<Path>) -> &mut Self {
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .flags(EnvFlags::NO_SUB_DIR)
-                .open(path.as_ref())
-        }
-        .expect("Expected to be able to open the environment.");
-        self.environment(env)
-    }
 }
 
 pub struct Behavior {
     inner: libp2p::request_response::cbor::Behaviour<RendezvousRequest, RendezvousResponse>,
     config: Config,
-    last_clean: DateTime<Utc>,
+    registrations: Registrations
 }
 
 #[derive(Clone, Debug)]
 pub enum Event {
     CreatedRegistration(Registration),
-    UpdatedRegistration(Registration),
-    RemovedRegistration(Registration),
+    RemovedRegistration(NodeIdentifier),
     ExpiredRegistration(Registration),
     RegistrationFailure(NodeIdentifier, InterplexError),
     DeregistrationFailure(NodeIdentifier, InterplexError),
@@ -79,7 +50,7 @@ pub enum Event {
     },
     ServedFind {
         source: NodeIdentifier,
-        result: NodeIdentifier,
+        result: Option<Registration>,
     },
     FailedFind {
         source: NodeIdentifier,
@@ -145,7 +116,72 @@ impl NetworkBehaviour for Behavior {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
-        todo!()
+        if let Ok(Some(expired)) = self.registrations.poll(self.config.max_lifetime) {
+            return Poll::Ready(ToSwarm::GenerateEvent(Event::ExpiredRegistration(expired)));
+        }
+        loop {
+            if let Poll::Ready(to_swarm) = self.inner.poll(cx) {
+                match to_swarm {
+                    ToSwarm::GenerateEvent(libp2p::request_response::Event::Message {
+                        peer: peer_id,
+                        message:
+                            libp2p::request_response::Message::Request {
+                                request, channel, ..
+                            },
+                        ..
+                    }) => {
+                        if let Some((event, response)) =
+                            self.handle_request(peer_id, request)
+                        {
+                            if let Some(resp) = response {
+                                self.inner
+                                    .send_response(channel, resp)
+                                    .expect("Send response");
+                            }
+
+                            return Poll::Ready(ToSwarm::GenerateEvent(event));
+                        }
+
+                        continue;
+                    }
+                    ToSwarm::GenerateEvent(libp2p::request_response::Event::InboundFailure {
+                        peer,
+                        request_id,
+                        error,
+                        ..
+                    }) => {
+                        tracing::warn!(
+                            %peer,
+                            request=%request_id,
+                            "Inbound request with peer failed: {error}"
+                        );
+
+                        continue;
+                    }
+                    ToSwarm::GenerateEvent(libp2p::request_response::Event::ResponseSent {
+                        ..
+                    })
+                    | ToSwarm::GenerateEvent(libp2p::request_response::Event::Message {
+                        peer: _,
+                        message: libp2p::request_response::Message::Response { .. },
+                        ..
+                    })
+                    | ToSwarm::GenerateEvent(libp2p::request_response::Event::OutboundFailure {
+                        ..
+                    }) => {
+                        continue;
+                    }
+                    other => {
+                        let new_to_swarm = other
+                            .map_out(|_| unreachable!("we manually map `GenerateEvent` variants"));
+
+                        return Poll::Ready(new_to_swarm);
+                    }
+                };
+            }
+
+            return Poll::Pending;
+        }
     }
 }
 
@@ -160,57 +196,36 @@ impl Behavior {
                 request_response::Config::default(),
             ),
             config: config.clone(),
-            last_clean: Utc::now(),
+            registrations: Registrations::new(config.database)
         }
     }
 
-    fn ro(&self) -> IResult<(Database<Str, SerdeBincode<Registration>>, RoTxn<'_>)> {
-        let txn = self
-            .config
-            .environment
-            .read_txn()
-            .or_else(|e| Err(InterplexError::wrap(e)))?;
-        let database = self
-            .config
-            .environment
-            .open_database::<Str, SerdeBincode<Registration>>(&txn, Some("registrations"))
-            .or_else(|e| Err(InterplexError::wrap(e)))?
-            .ok_or(InterplexError::wrap(
-                "Cannot open non-existent database as RO.",
-            ))?;
-        Ok((database, txn))
-    }
-
-    fn rw(&self) -> IResult<(Database<Str, SerdeBincode<Registration>>, RwTxn<'_>)> {
-        let mut txn = self
-            .config
-            .environment
-            .write_txn()
-            .or_else(|e| Err(InterplexError::wrap(e)))?;
-        let database = self
-            .config
-            .environment
-            .create_database::<Str, SerdeBincode<Registration>>(&mut txn, Some("registrations"))
-            .or_else(|e| Err(InterplexError::wrap(e)))?;
-        Ok((database, txn))
-    }
-
-    fn clean(&self) -> IResult<Vec<Registration>> {
-        let (db, txn) = self.ro()?;
-        db.get_greater_than(txn, key)
-        let mut to_clean: Vec<Registration> = Vec::new();
-        for item in db.iter(&txn).or_else(|e| Err(InterplexError::wrap(e)))? {
-            if let Ok((_, registration)) = item {
-                to_clean.push(registration);
+    pub fn handle_request(&self, _: PeerId, request: RendezvousRequest) -> Option<(Event, Option<RendezvousResponse>)> {
+        match request.command.clone() {
+            RendezvousCommand::Register(addresses) => {
+                match self.registrations.register(request.source.clone(), addresses) {
+                    Ok(reg) => Some((Event::CreatedRegistration(reg.clone()), Some(RendezvousResponse::Register((reg.last_registration + self.config.max_lifetime) - Utc::now())))),
+                    Err(e) => Some((Event::RegistrationFailure(request.source.clone(), e.clone()), Some(RendezvousResponse::Error(e.clone()))))
+                }
+            },
+            RendezvousCommand::Deregister => {
+                match self.registrations.deregister(request.source.clone()) {
+                    Ok(()) => Some((Event::RemovedRegistration(request.source.clone()), Some(RendezvousResponse::Deregister))),
+                    Err(e) => Some((Event::DeregistrationFailure(request.source.clone(), e.clone()), Some(RendezvousResponse::Error(e.clone()))))
+                }
+            },
+            RendezvousCommand::Discover(group) => {
+                match self.registrations.discover(request.source.clone(), group.clone()) {
+                    Ok(results) => Some((Event::ServedDiscovery { source: request.source.clone(), namespace: request.source.namespace.clone(), group: group.clone(), results: results.len() as u64 }, Some(RendezvousResponse::Discover(results)))),
+                    Err(e) => Some((Event::FailedDiscovery { source: request.source.clone(), namespace: request.source.namespace.clone(), group: group.clone(), error: e.clone() }, Some(RendezvousResponse::Error(e.clone()))))
+                }
+            },
+            RendezvousCommand::Find(key) => {
+                match self.registrations.get(key.clone()) {
+                    Ok(result) => Some((Event::ServedFind { source: request.source.clone(), result: result.clone() }, Some(RendezvousResponse::Find(result.clone())))),
+                    Err(e) => Some((Event::FailedFind { source: request.source.clone(), error: e.clone() }, Some(RendezvousResponse::Error(e.clone()))))
+                }
             }
         }
-
-        let (db, mut txn) = self.rw()?;
-        for r in to_clean.clone() {
-            db.delete(&mut txn, r.identity.key().as_str())
-                .or_else(|e| Err(InterplexError::wrap(e)))?;
-        }
-
-        Ok(to_clean)
     }
 }
