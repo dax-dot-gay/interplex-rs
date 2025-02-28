@@ -1,9 +1,9 @@
-use std::{collections::HashSet, path::Path};
+use std::{collections::HashSet, fs::create_dir_all, path::Path};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use heed::{
     types::{SerdeBincode, Str},
-    Database, Env, EnvFlags, EnvOpenOptions, RoTxn, RwTxn,
+    Database, Env, EnvOpenOptions, RoTxn, RwTxn,
 };
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
@@ -32,20 +32,32 @@ pub struct Registrations(Env);
 
 impl Registrations {
     pub fn new(path: impl AsRef<Path>) -> Self {
+        let _path = path.as_ref();
+        if !_path.exists() {
+            create_dir_all(_path).expect("Failed to create db folder");
+        }
+
         let env = unsafe {
             EnvOpenOptions::new()
-                .flags(EnvFlags::NO_SUB_DIR)
-                .open(path.as_ref())
+                .max_dbs(12)
+                .open(_path)
         }
         .expect("Unable to open registration store.");
         let created = Self(env);
-        created
+        let exp = created
             .expirations_read_write()
             .expect("Failed to initialize expiration database");
-        created
+        exp.2.commit().unwrap();
+        exp.1.commit().unwrap();
+
+        let reg = created
             .registrations_read_write()
             .expect("Failed to initialize registration database");
-        created
+
+        reg.2.commit().unwrap();
+        reg.1.commit().unwrap();
+
+        created.clone()
     }
 
     fn rw(&self) -> IResult<RwTxn<'_>> {

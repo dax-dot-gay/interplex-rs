@@ -4,4 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+chrono = { version = "0.4.40", features = ["serde"] }
+clap = { version = "4.5.31", features = ["cargo", "derive"] }
 interplex_common = { path = "../../crates/interplex_common" }
+libp2p = { version = "0.55.0", features = ["tokio", "mdns", "noise", "macros", "tcp", "yamux", "tls", "dns", "ed25519", "identify", "relay", "upnp", "autonat"] }
+thiserror = "2.0.11"
+tokio = { version = "1.43.0", features = ["full"] }
