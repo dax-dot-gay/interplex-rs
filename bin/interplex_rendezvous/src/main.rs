@@ -10,7 +10,7 @@ use clap::Parser;
 use config::Config;
 use interplex_common::rendezvous;
 use libp2p::{
-    autonat, futures::StreamExt as _, identify, identity::ed25519::Keypair, multiaddr::Protocol, noise, ping, relay, swarm::NetworkBehaviour, tcp, tls, yamux, Multiaddr, SwarmBuilder
+    autonat, futures::StreamExt as _, identify, identity::ed25519::Keypair, multiaddr::Protocol, noise, ping, relay, swarm::NetworkBehaviour, tcp, yamux, Multiaddr, SwarmBuilder
 };
 
 mod config;
@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_tokio()
         .with_tcp(
             tcp::Config::default(),
-            (tls::Config::new, noise::Config::new),
+            noise::Config::new,
             yamux::Config::default,
         )?
         .with_dns()?
@@ -94,6 +94,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     } else {
         swarm.listen_on("/ip4/0.0.0.0/tcp/8080".parse()?)?;
     }
+
+    println!("Server ID: {}", swarm.local_peer_id().to_string());
 
     loop {
         match swarm.select_next_some().await {

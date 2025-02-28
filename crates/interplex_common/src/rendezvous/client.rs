@@ -328,11 +328,11 @@ impl Behaviour {
     pub fn discover(
         &mut self,
         target: &PeerId,
-        group: Option<impl AsRef<str>>,
+        group: Option<String>,
     ) -> OutboundRequestId {
         self.send_request(
             target,
-            RendezvousCommand::Discover(group.and_then(|g| Some(g.as_ref().to_string()))),
+            RendezvousCommand::Discover(group.and_then(|g| Some(g))),
         )
     }
 

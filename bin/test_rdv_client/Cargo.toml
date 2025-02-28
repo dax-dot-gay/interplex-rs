@@ -1,0 +1,9 @@
+[package]
+name = "test_rdv_client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libp2p = { version = "0.55.0", features = ["full"] }
+interplex_common = { path = "../../crates/interplex_common" }
+tokio = { version = "1.43.0", features = ["full"] }
