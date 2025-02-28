@@ -1,0 +1,7 @@
+[package]
+name = "interplex_rendezvous"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+interplex_common = { path = "../../crates/interplex_common" }

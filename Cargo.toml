@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = [ "bin/interplex-rendezvous", "crates/interplex","crates/interplex-common"]
+members = [ "bin/interplex_rendezvous", "crates/interplex","crates/interplex_common"]
