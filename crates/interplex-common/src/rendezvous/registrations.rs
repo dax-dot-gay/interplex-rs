@@ -121,6 +121,8 @@ impl Registrations {
         {
             reg.addresses = addresses.clone();
             reg.identity.discoverability = node.clone().discoverability;
+            reg.identity.alias = node.clone().alias;
+            reg.identity.metadata = node.clone().metadata;
             let last_exp = reg.last_registration.timestamp();
             reg.last_registration = current_time;
             reg.ttl = ttl.clone();

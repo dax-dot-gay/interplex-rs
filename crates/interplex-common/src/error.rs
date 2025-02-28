@@ -1,5 +1,6 @@
-use std::fmt::{format, Debug};
+use std::fmt::Debug;
 
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -18,7 +19,13 @@ pub enum InterplexError {
     Unknown(String),
 
     #[error("{0}")]
-    Wrapped(String)
+    Wrapped(String),
+
+    #[error("This node is not externally accessible (no external addresses)")]
+    NodeInaccessible,
+
+    #[error("Failed to dispatch request to {peer}: {namespace}({command})")]
+    RequestDispatch {peer: PeerId, namespace: String, command: String}
 }
 
 impl InterplexError {
