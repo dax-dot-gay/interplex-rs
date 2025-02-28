@@ -1,18 +1,18 @@
-use std::
-    task::{Context, Poll}
-;
+use std::task::{Context, Poll};
 
-use crate::{
-    error::InterplexError,
-    identification::NodeIdentifier,
-};
-use chrono::{TimeDelta, Utc};
+use crate::{error::InterplexError, identification::NodeIdentifier};
+use chrono::TimeDelta;
 use derive_builder::Builder;
 use libp2p::{
-    request_response::{self, ProtocolSupport}, swarm::{NetworkBehaviour, THandlerInEvent, ToSwarm}, Multiaddr, PeerId, StreamProtocol
+    request_response::{self, ProtocolSupport},
+    swarm::{NetworkBehaviour, THandlerInEvent, ToSwarm},
+    Multiaddr, PeerId, StreamProtocol,
 };
 
-use super::{message::{RendezvousCommand, RendezvousRequest, RendezvousResponse}, registrations::{Registration, Registrations}};
+use super::{
+    message::{RendezvousCommand, RendezvousRequest, RendezvousResponse},
+    registrations::{Registration, Registrations},
+};
 
 #[derive(Builder, Clone, Debug)]
 #[builder(setter(into, strip_option))]
@@ -26,7 +26,7 @@ pub struct Config {
 pub struct Behavior {
     inner: libp2p::request_response::cbor::Behaviour<RendezvousRequest, RendezvousResponse>,
     config: Config,
-    registrations: Registrations
+    registrations: Registrations,
 }
 
 #[derive(Clone, Debug)]
@@ -53,6 +53,14 @@ pub enum Event {
         result: Option<Registration>,
     },
     FailedFind {
+        source: NodeIdentifier,
+        error: InterplexError,
+    },
+    ServedGroups {
+        source: NodeIdentifier,
+        result: Vec<String>,
+    },
+    FailedGroups {
         source: NodeIdentifier,
         error: InterplexError,
     },
@@ -130,9 +138,7 @@ impl NetworkBehaviour for Behavior {
                             },
                         ..
                     }) => {
-                        if let Some((event, response)) =
-                            self.handle_request(peer_id, request)
-                        {
+                        if let Some((event, response)) = self.handle_request(peer_id, request) {
                             if let Some(resp) = response {
                                 self.inner
                                     .send_response(channel, resp)
@@ -196,34 +202,102 @@ impl Behavior {
                 request_response::Config::default(),
             ),
             config: config.clone(),
-            registrations: Registrations::new(config.database)
+            registrations: Registrations::new(config.database),
         }
     }
 
-    pub fn handle_request(&self, _: PeerId, request: RendezvousRequest) -> Option<(Event, Option<RendezvousResponse>)> {
+    pub fn handle_request(
+        &self,
+        _: PeerId,
+        request: RendezvousRequest,
+    ) -> Option<(Event, Option<RendezvousResponse>)> {
         match request.command.clone() {
             RendezvousCommand::Register(addresses) => {
-                match self.registrations.register(request.source.clone(), addresses) {
-                    Ok(reg) => Some((Event::CreatedRegistration(reg.clone()), Some(RendezvousResponse::Register((reg.last_registration + self.config.max_lifetime) - Utc::now())))),
-                    Err(e) => Some((Event::RegistrationFailure(request.source.clone(), e.clone()), Some(RendezvousResponse::Error(e.clone()))))
+                match self
+                    .registrations
+                    .register(request.source.clone(), addresses, self.config.max_lifetime)
+                {
+                    Ok(reg) => Some((
+                        Event::CreatedRegistration(reg.clone()),
+                        Some(RendezvousResponse::Register(Ok(
+                            reg.last_registration + self.config.max_lifetime
+                        ))),
+                    )),
+                    Err(e) => Some((
+                        Event::RegistrationFailure(request.source.clone(), e.clone()),
+                        Some(RendezvousResponse::Register(Err(e.clone()))),
+                    )),
                 }
-            },
+            }
             RendezvousCommand::Deregister => {
                 match self.registrations.deregister(request.source.clone()) {
-                    Ok(()) => Some((Event::RemovedRegistration(request.source.clone()), Some(RendezvousResponse::Deregister))),
-                    Err(e) => Some((Event::DeregistrationFailure(request.source.clone(), e.clone()), Some(RendezvousResponse::Error(e.clone()))))
+                    Ok(()) => Some((
+                        Event::RemovedRegistration(request.source.clone()),
+                        Some(RendezvousResponse::Deregister(Ok(()))),
+                    )),
+                    Err(e) => Some((
+                        Event::DeregistrationFailure(request.source.clone(), e.clone()),
+                        Some(RendezvousResponse::Deregister(Err(e.clone()))),
+                    )),
                 }
-            },
+            }
             RendezvousCommand::Discover(group) => {
-                match self.registrations.discover(request.source.clone(), group.clone()) {
-                    Ok(results) => Some((Event::ServedDiscovery { source: request.source.clone(), namespace: request.source.namespace.clone(), group: group.clone(), results: results.len() as u64 }, Some(RendezvousResponse::Discover(results)))),
-                    Err(e) => Some((Event::FailedDiscovery { source: request.source.clone(), namespace: request.source.namespace.clone(), group: group.clone(), error: e.clone() }, Some(RendezvousResponse::Error(e.clone()))))
+                match self
+                    .registrations
+                    .discover(request.source.clone(), group.clone())
+                {
+                    Ok(results) => Some((
+                        Event::ServedDiscovery {
+                            source: request.source.clone(),
+                            namespace: request.source.namespace.clone(),
+                            group: group.clone(),
+                            results: results.len() as u64,
+                        },
+                        Some(RendezvousResponse::Discover(Ok(results))),
+                    )),
+                    Err(e) => Some((
+                        Event::FailedDiscovery {
+                            source: request.source.clone(),
+                            namespace: request.source.namespace.clone(),
+                            group: group.clone(),
+                            error: e.clone(),
+                        },
+                        Some(RendezvousResponse::Discover(Err(e.clone()))),
+                    )),
                 }
+            }
+            RendezvousCommand::Find(key) => match self.registrations.get(key.clone()) {
+                Ok(result) => Some((
+                    Event::ServedFind {
+                        source: request.source.clone(),
+                        result: result.clone(),
+                    },
+                    Some(RendezvousResponse::Find(Ok(result.clone()))),
+                )),
+                Err(e) => Some((
+                    Event::FailedFind {
+                        source: request.source.clone(),
+                        error: e.clone(),
+                    },
+                    Some(RendezvousResponse::Find(Err(e.clone()))),
+                )),
             },
-            RendezvousCommand::Find(key) => {
-                match self.registrations.get(key.clone()) {
-                    Ok(result) => Some((Event::ServedFind { source: request.source.clone(), result: result.clone() }, Some(RendezvousResponse::Find(result.clone())))),
-                    Err(e) => Some((Event::FailedFind { source: request.source.clone(), error: e.clone() }, Some(RendezvousResponse::Error(e.clone()))))
+            RendezvousCommand::Groups => {
+                match self.registrations.groups(request.source.namespace.clone()) {
+                    Ok(result) => Some((
+                        Event::ServedGroups {
+                            source: request.source.clone(),
+                            result: result.clone(),
+                        },
+                        Some(RendezvousResponse::Groups(Ok(result))),
+                    )),
+                    Err(e) => Some((
+                        Event::FailedGroups {
+                            source: request.source.clone(),
+                            error: e.clone(),
+                        },
+                        Some(RendezvousResponse::Groups(Err(e.clone()))),
+                    )),
                 }
             }
         }

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use heed::{
@@ -18,6 +18,13 @@ pub struct Registration {
     pub identity: NodeIdentifier,
     pub addresses: Vec<Multiaddr>,
     pub last_registration: DateTime<Utc>,
+    pub ttl: TimeDelta
+}
+
+impl Registration {
+    pub fn expiration(&self) -> DateTime<Utc> {
+        self.last_registration + self.ttl
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +110,7 @@ impl Registrations {
         &self,
         node: NodeIdentifier,
         addresses: Vec<Multiaddr>,
+        ttl: TimeDelta
     ) -> IResult<Registration> {
         let (rdb, rro, mut rrw) = self.registrations_read_write()?;
         let (edb, _, mut erw) = self.expirations_read_write()?;
@@ -115,6 +123,7 @@ impl Registrations {
             reg.identity.discoverability = node.clone().discoverability;
             let last_exp = reg.last_registration.timestamp();
             reg.last_registration = current_time;
+            reg.ttl = ttl.clone();
 
             (reg, Some(last_exp))
         } else {
@@ -123,6 +132,7 @@ impl Registrations {
                     identity: node.clone(),
                     addresses: addresses.clone(),
                     last_registration: current_time,
+                    ttl: ttl.clone()
                 },
                 None,
             )
@@ -232,5 +242,17 @@ impl Registrations {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn groups(&self, namespace: impl Into<String>) -> IResult<Vec<String>> {
+        let (rdb, rro) = self.registrations_read_only()?;
+        let mut groups: HashSet<String> = HashSet::new();
+        for registration in rdb.prefix_iter(&rro, &format!("{}/", namespace.into())).or_else(|e| Err(InterplexError::wrap(e)))? {
+            if let Ok((_, Registration {identity: NodeIdentifier {group: Some(group), ..}, ..})) = registration {
+                groups.insert(group);
+            }
+        }
+
+        Ok(groups.into_iter().collect())
     }
 }

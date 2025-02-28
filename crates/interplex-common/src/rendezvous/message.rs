@@ -1,7 +1,8 @@
+use chrono::{DateTime, Utc};
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
 
-use crate::{error::InterplexError, identification::NodeIdentifier};
+use crate::{error::IResult, identification::NodeIdentifier};
 
 use super::registrations::Registration;
 
@@ -29,24 +30,27 @@ pub enum RendezvousCommand {
     Discover(Option<String>),
 
     /// Attempts to retrieve a peer by locator key ("<namespace>/<group>/<id>")
-    Find(String)
+    Find(String),
+
+    /// Return a list of all groups in the source peer's namespace
+    Groups
 }
 
 /// Rendezvous response types
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum RendezvousResponse {
-    /// Returned if an error occurs
-    Error(InterplexError),
-
-    /// Returned on successful registration, with the time remaining until the next required registration/check-in
-    Register(chrono::TimeDelta),
+    /// Returned on successful registration, with current expiration time
+    Register(IResult<DateTime<Utc>>),
 
     /// Returned on successful de-registration
-    Deregister,
+    Deregister(IResult<()>),
 
     /// Returned on successful discovery operation
-    Discover(Vec<Registration>),
+    Discover(IResult<Vec<Registration>>),
 
     /// Returned on successful find operation (if peer is not found, returns None)
-    Find(Option<Registration>)
+    Find(IResult<Option<Registration>>),
+
+    /// Returned on successful group operation
+    Groups(IResult<Vec<String>>)
 }
