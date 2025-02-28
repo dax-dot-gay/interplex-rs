@@ -30,6 +30,7 @@ impl Registration {
 #[derive(Clone, Debug)]
 pub struct Registrations(Env);
 
+#[allow(dead_code)]
 impl Registrations {
     pub fn new(path: impl AsRef<Path>) -> Self {
         let _path = path.as_ref();
@@ -44,18 +45,11 @@ impl Registrations {
         }
         .expect("Unable to open registration store.");
         let created = Self(env);
-        let exp = created
-            .expirations_read_write()
-            .expect("Failed to initialize expiration database");
-        exp.2.commit().unwrap();
-        exp.1.commit().unwrap();
-
-        let reg = created
-            .registrations_read_write()
-            .expect("Failed to initialize registration database");
-
-        reg.2.commit().unwrap();
-        reg.1.commit().unwrap();
+        let mut txn = created.rw().unwrap();
+        created.expirations_read_write(&mut txn).expect("Unable to create expiration DB");
+        created.registrations_read_write(&mut txn).expect("Unable to create registration DB");
+        
+        txn.commit().unwrap();
 
         created.clone()
     }
@@ -70,52 +64,44 @@ impl Registrations {
 
     fn registrations_read_only(
         &self,
-    ) -> IResult<(Database<Str, SerdeBincode<Registration>>, RoTxn<'_>)> {
-        let txn = self.ro()?;
+        txn: &RoTxn<'_>
+    ) -> IResult<Database<Str, SerdeBincode<Registration>>> {
         let db = self
             .0
-            .open_database::<Str, SerdeBincode<Registration>>(&txn, Some("registrations"))
+            .open_database::<Str, SerdeBincode<Registration>>(txn, Some("registrations"))
             .or_else(|e| Err(InterplexError::wrap(e)))?
             .ok_or(InterplexError::wrap(
                 "Registration database not initialized.",
             ))?;
-        Ok((db, txn))
+        Ok(db)
     }
 
     fn registrations_read_write(
         &self,
-    ) -> IResult<(
-        Database<Str, SerdeBincode<Registration>>,
-        RoTxn<'_>,
-        RwTxn<'_>,
-    )> {
-        let rtxn = self.ro()?;
-        let mut wtxn = self.rw()?;
+        txn: &mut RwTxn<'_>
+    ) -> IResult<Database<Str, SerdeBincode<Registration>>> {
         let db = self
             .0
-            .create_database::<Str, SerdeBincode<Registration>>(&mut wtxn, Some("registrations"))
+            .create_database::<Str, SerdeBincode<Registration>>(txn, Some("registrations"))
             .or_else(|e| Err(InterplexError::wrap(e)))?;
-        Ok((db, rtxn, wtxn))
+        Ok(db)
     }
 
-    fn expirations_read_only(&self) -> IResult<(Database<Str, Str>, RoTxn<'_>)> {
-        let txn = self.ro()?;
+    fn expirations_read_only(&self, txn: &RoTxn<'_>) -> IResult<Database<Str, Str>> {
         let db = self
             .0
-            .open_database::<Str, Str>(&txn, Some("expirations"))
+            .open_database::<Str, Str>(txn, Some("expirations"))
             .or_else(|e| Err(InterplexError::wrap(e)))?
             .ok_or(InterplexError::wrap("Expiration database not initialized."))?;
-        Ok((db, txn))
+        Ok(db)
     }
 
-    fn expirations_read_write(&self) -> IResult<(Database<Str, Str>, RoTxn<'_>, RwTxn<'_>)> {
-        let rtxn = self.ro()?;
-        let mut wtxn = self.rw()?;
+    fn expirations_read_write(&self, txn: &mut RwTxn<'_>) -> IResult<Database<Str, Str>> {
         let db = self
             .0
-            .create_database::<Str, Str>(&mut wtxn, Some("expirations"))
+            .create_database::<Str, Str>(txn, Some("expirations"))
             .or_else(|e| Err(InterplexError::wrap(e)))?;
-        Ok((db, rtxn, wtxn))
+        Ok(db)
     }
 
     pub fn register(
@@ -124,11 +110,15 @@ impl Registrations {
         addresses: Vec<Multiaddr>,
         ttl: TimeDelta
     ) -> IResult<Registration> {
-        let (rdb, rro, mut rrw) = self.registrations_read_write()?;
-        let (edb, _, mut erw) = self.expirations_read_write()?;
+        let mut rw = self.rw()?;
+        let ro = self.ro()?;
+
+        let rdb = self.registrations_read_write(&mut rw)?;
+        let edb = self.expirations_read_write(&mut rw)?;
+
         let current_time = Utc::now();
         let (created, last_exp) = if let Some(mut reg) = rdb
-            .get(&rro, &node.key())
+            .get(&ro, &node.key())
             .or_else(|e| Err(InterplexError::wrap(e)))?
         {
             reg.addresses = addresses.clone();
@@ -153,35 +143,40 @@ impl Registrations {
         };
 
         if let Some(exp) = last_exp {
-            edb.delete(&mut erw, &format!("{}:{}", exp, node.clone().key()))
+            edb.delete(&mut rw, &format!("{}:{}", exp, node.clone().key()))
                 .or_else(|e| Err(InterplexError::wrap(e)))?;
         }
 
         edb.put(
-            &mut erw,
+            &mut rw,
             &format!("{}:{}", current_time.timestamp(), node.clone().key()),
             &node.clone().key(),
         )
         .or_else(|e| Err(InterplexError::wrap(e)))?;
-        rdb.put(&mut rrw, &created.identity.key(), &created)
+        rdb.put(&mut rw, &created.identity.key(), &created)
             .or_else(|e| Err(InterplexError::wrap(e)))?;
-        rrw.commit().or_else(|e| Err(InterplexError::wrap(e)))?;
-        erw.commit().or_else(|e| Err(InterplexError::wrap(e)))?;
+        rw.commit().or_else(|e| Err(InterplexError::wrap(e)))?;
+        ro.commit().or_else(|e| Err(InterplexError::wrap(e)))?;
         Ok(created.clone())
     }
 
     pub fn deregister(&self, node: NodeIdentifier) -> IResult<()> {
-        let (rdb, _, mut rrw) = self.registrations_read_write()?;
-        rdb.delete(&mut rrw, &node.key())
+        let mut rw = self.rw()?;
+
+        let rdb = self.registrations_read_write(&mut rw)?;
+        rdb.delete(&mut rw, &node.key())
             .or_else(|e| Err(InterplexError::wrap(e)))?;
-        rrw.commit().or_else(|e| Err(InterplexError::wrap(e)))?;
+        rw.commit().or_else(|e| Err(InterplexError::wrap(e)))?;
         Ok(())
     }
 
     pub fn poll(&self, expiration: TimeDelta) -> IResult<Option<Registration>> {
-        let (rdb, rro) = self.registrations_read_only()?;
-        let (edb, ero) = self.expirations_read_only()?;
-        let expired = if let Ok(Some((key, value))) = edb.first(&ero) {
+        let mut rw = self.rw()?;
+        let ro = self.ro()?;
+
+        let rdb = self.registrations_read_write(&mut rw)?;
+        let edb = self.expirations_read_write(&mut rw)?;
+        let expired = if let Ok(Some((key, value))) = edb.first(&ro) {
             if let Some((last_reg, _)) = key.split_once(":") {
                 if let Ok(ts) = last_reg.parse::<i64>() {
                     if DateTime::from_timestamp(ts, 0).unwrap() + expiration < Utc::now() {
@@ -199,18 +194,19 @@ impl Registrations {
             None
         };
 
+
         if let Some((expired_key, expired_value)) = expired {
-            let (edb, _, mut erw) = self.expirations_read_write()?;
-            let _ = edb.delete(&mut erw, &expired_key);
-            let _ = erw.commit();
-            if let Ok(Some(reg)) = rdb.get(&rro, &expired_value) {
-                let (rdb, _, mut rrw) = self.registrations_read_write()?;
-                let _ = rdb.delete(&mut rrw, &expired_key);
-                let _ = rrw.commit();
+            let _ = edb.delete(&mut rw, &expired_key);
+            if let Ok(Some(reg)) = rdb.get(&ro, &expired_value) {
+                let _ = rdb.delete(&mut rw, &expired_key);
+                let _ = rw.commit();
+                let _ = ro.commit();
                 return Ok(Some(reg));
             }
         }
 
+        let _ = ro.commit();
+        let _ = rw.commit();
         Ok(None)
     }
 
@@ -219,14 +215,15 @@ impl Registrations {
         node: NodeIdentifier,
         group: Option<impl AsRef<str>>,
     ) -> IResult<Vec<Registration>> {
-        let (rdb, rro) = self.registrations_read_only()?;
+        let ro = self.ro()?;
+        let rdb = self.registrations_read_only(&ro)?;
         let prefix = match group {
             Some(g) => format!("{}/{}/", node.namespace.clone(), g.as_ref().to_string()),
             None => format!("{}/", node.namespace.clone()),
         };
         let mut discovered: Vec<Registration> = Vec::new();
         for result in rdb
-            .prefix_iter(&rro, &prefix)
+            .prefix_iter(&ro, &prefix)
             .or_else(|e| Err(InterplexError::wrap(e)))?
         {
             if let Ok((key, registration)) = result {
@@ -245,28 +242,32 @@ impl Registrations {
                 }
             }
         }
-
+        let _ = ro.commit();
         Ok(discovered)
     }
 
     pub fn get(&self, key: impl Into<String>) -> IResult<Option<Registration>> {
-        let (rdb, rro) = self.registrations_read_only()?;
-        if let Ok(Some(result)) = rdb.get(&rro, &key.into()) {
+        let ro = self.ro()?;
+        let rdb = self.registrations_read_only(&ro)?;
+        if let Ok(Some(result)) = rdb.get(&ro, &key.into()) {
+            let _ = ro.commit();
             Ok(Some(result))
         } else {
+            let _ = ro.commit();
             Ok(None)
         }
     }
 
     pub fn groups(&self, namespace: impl Into<String>) -> IResult<Vec<String>> {
-        let (rdb, rro) = self.registrations_read_only()?;
+        let ro = self.ro()?;
+        let rdb = self.registrations_read_only(&ro)?;
         let mut groups: HashSet<String> = HashSet::new();
-        for registration in rdb.prefix_iter(&rro, &format!("{}/", namespace.into())).or_else(|e| Err(InterplexError::wrap(e)))? {
+        for registration in rdb.prefix_iter(&ro, &format!("{}/", namespace.into())).or_else(|e| Err(InterplexError::wrap(e)))? {
             if let Ok((_, Registration {identity: NodeIdentifier {group: Some(group), ..}, ..})) = registration {
                 groups.insert(group);
             }
         }
-
+        let _ = ro.commit();
         Ok(groups.into_iter().collect())
     }
 }
