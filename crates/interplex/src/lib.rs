@@ -1,14 +1,7 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+mod network;
+mod node;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+// notes for future me
+// request/response with streams! Allows arbitrary-size thingies
+// base64 code blocks, use ASCII control codes to split blocks & mark start and end
+// i still don't know if we wanna do single request/response per stream or just open a stream and let the client close it when it's done
