@@ -356,6 +356,14 @@ impl Behaviour {
         self.send_request(target, RendezvousCommand::Groups)
     }
 
+    pub fn peers(&self) -> HashMap<PeerId, Registration> {
+        self.peers.iter().map(|(k, (_, v, _))| (k.clone(), v.clone())).collect()
+    }
+
+    pub fn rendezvous_points(&self) -> Vec<PeerId> {
+        self.rendezvous_points.keys().cloned().collect()
+    }
+
     fn event_for_outbound_failure(&mut self, req_id: &OutboundRequestId) -> Option<Event> {
         if let Some((target, command)) = self.processing_requests.remove(req_id) {
             let err = InterplexError::RequestDispatch {
