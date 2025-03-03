@@ -25,7 +25,10 @@ pub enum InterplexError {
     NodeInaccessible,
 
     #[error("Failed to dispatch request to {peer}: {namespace}({command})")]
-    RequestDispatch {peer: PeerId, namespace: String, command: String}
+    RequestDispatch {peer: PeerId, namespace: String, command: String},
+
+    #[error("Improperly specified address: {addr}: {reason}")]
+    Address {addr: String, reason: String}
 }
 
 impl InterplexError {

@@ -17,6 +17,7 @@ pub(crate) enum Command {
     ReadStream { stream_id: Uuid, buf_size: usize },
     Subscribe(Vec<String>),
     Unsubscribe(Vec<String>),
+    ExitLoop
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +28,7 @@ pub(crate) enum CommandResponse {
     ReadStream { data: Vec<u8>, bytes_read: usize },
     Subscribe,
     Unsubscribe,
+    ExitLoop
 }
 
 #[derive(Clone)]
