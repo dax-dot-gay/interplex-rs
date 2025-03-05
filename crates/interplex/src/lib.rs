@@ -1,6 +1,7 @@
 mod network;
 mod node;
 mod ipc;
+mod error;
 
 // notes for future me
 // request/response with streams! Allows arbitrary-size thingies

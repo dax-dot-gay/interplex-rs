@@ -1,7 +1,11 @@
+use std::collections::HashMap;
+
 use async_channel::Sender;
-use interplex_common::error::InterplexError;
-use libp2p::{bytes::Bytes, PeerId};
+use interplex_common::identification::NodeIdentifier;
+use libp2p::{bytes::Bytes, Multiaddr, PeerId};
 use uuid::Uuid;
+
+use crate::error::Error;
 
 #[derive(Clone, Debug)]
 pub(crate) enum StreamRole {
@@ -17,7 +21,10 @@ pub(crate) enum Command {
     ReadStream { stream_id: Uuid, buf_size: usize },
     Subscribe(Vec<String>),
     Unsubscribe(Vec<String>),
-    ExitLoop
+    ExitLoop,
+    AddRendezvous(Multiaddr),
+    RemoveRendezvous(PeerId),
+    UpdateRemotes(Option<String>)
 }
 
 #[derive(Clone, Debug)]
@@ -28,12 +35,15 @@ pub(crate) enum CommandResponse {
     ReadStream { data: Vec<u8>, bytes_read: usize },
     Subscribe,
     Unsubscribe,
-    ExitLoop
+    ExitLoop,
+    AddRendezvous(PeerId),
+    RemoveRendezvous,
+    UpdateRemotes
 }
 
 #[derive(Clone)]
 pub(crate) struct CommandWrapper {
-    pub response_channel: Sender<Result<CommandResponse, InterplexError>>,
+    pub response_channel: Sender<Result<CommandResponse, Error>>,
     pub command: Command,
 }
 
@@ -54,4 +64,6 @@ pub(crate) enum Event {
         data: Bytes,
         topics: Vec<String>,
     },
+    DiscoveredPeers(HashMap<PeerId, NodeIdentifier>),
+    LostPeer(NodeIdentifier)
 }

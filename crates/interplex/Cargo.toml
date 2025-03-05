@@ -17,3 +17,4 @@ serde_json = "1.0.139"
 tokio = { version = "1.43.0", features = ["full"] }
 uuid = { version = "1.15.1", features = ["v4", "serde", "fast-rng"] }
 interplex_common = {path = "../interplex_common"}
+thiserror = "2.0.12"
