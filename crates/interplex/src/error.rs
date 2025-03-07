@@ -1,11 +1,12 @@
 use std::fmt::Debug;
 
 use interplex_common::error::InterplexError;
-use libp2p::PeerId;
+use libp2p::{Multiaddr, PeerId};
 use libp2p_stream::OpenStreamError;
 use thiserror::Error as ErrorDe;
 use uuid::Uuid;
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, ErrorDe)]
 pub enum Error {
     #[error("Encountered an internal networking error: {0:?}")]
@@ -41,8 +42,24 @@ pub enum Error {
 
     #[error("A connection error occurred while {context}: {reason}")]
     ConnectionError { context: String, reason: String },
+
+    #[error("Encoding error occurred: {0}")]
+    DataEncoding(String),
+
+    #[error("Failed to build node: {0}")]
+    BuildNode(String),
+
+    #[error("Incorrectly specified address ({address}): {reason}")]
+    IncorrectAddress {
+        address: String,
+        reason: String
+    },
+
+    #[error("The network is not currently running.")]
+    NetworkOffline
 }
 
+#[allow(dead_code)]
 impl Error {
     pub fn open_stream(peer_id: impl Into<PeerId>, error: OpenStreamError) -> Self {
         Error::OpenStream {
@@ -91,6 +108,18 @@ impl Error {
             reason: format!("{error:?}"),
         }
     }
+
+    pub fn encoding(error: impl Debug) -> Self {
+        Error::DataEncoding(format!("{error:?}"))
+    }
+
+    pub fn build_node(reason: impl Into<String>) -> Self {
+        Error::BuildNode(reason.into())
+    }
+
+    pub fn incorrect_address(address: impl Into<Multiaddr>, reason: impl Into<String>) -> Self {
+        Error::IncorrectAddress { address: Into::<Multiaddr>::into(address).to_string(), reason: reason.into() }
+    }
 }
 
 impl From<InterplexError> for Error {
@@ -99,4 +128,5 @@ impl From<InterplexError> for Error {
     }
 }
 
+#[allow(dead_code)]
 pub type CResult<T> = Result<T, Error>;

@@ -2,6 +2,10 @@ mod network;
 mod node;
 mod ipc;
 mod error;
+mod netwrapper;
+
+pub use node::{InterplexNode, SavedKey, NodeBuilder};
+pub use error::Error;
 
 // notes for future me
 // request/response with streams! Allows arbitrary-size thingies

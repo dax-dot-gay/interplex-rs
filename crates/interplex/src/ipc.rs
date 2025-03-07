@@ -7,12 +7,14 @@ use uuid::Uuid;
 
 use crate::error::Error;
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum StreamRole {
     Source,
     Sink,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum Command {
     OpenStream(PeerId),
@@ -24,9 +26,12 @@ pub(crate) enum Command {
     ExitLoop,
     AddRendezvous(Multiaddr),
     RemoveRendezvous(PeerId),
-    UpdateRemotes(Option<String>)
+    UpdateRemotes(Option<String>),
+    ListPeers,
+    GetPeer(PeerId)
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum CommandResponse {
     OpenStream(Uuid),
@@ -38,15 +43,19 @@ pub(crate) enum CommandResponse {
     ExitLoop,
     AddRendezvous(PeerId),
     RemoveRendezvous,
-    UpdateRemotes
+    UpdateRemotes,
+    ListPeers(HashMap<PeerId, NodeIdentifier>),
+    GetPeer(Option<NodeIdentifier>)
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct CommandWrapper {
     pub response_channel: Sender<Result<CommandResponse, Error>>,
     pub command: Command,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum Event {
     StreamOpened {

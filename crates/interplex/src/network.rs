@@ -17,13 +17,12 @@ use libp2p::{
     identity::Keypair,
     multiaddr::Protocol,
     noise, ping, relay,
-    request_response::OutboundRequestId,
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, upnp, yamux, Multiaddr, PeerId, Stream, StreamProtocol, Swarm, SwarmBuilder,
 };
 use tokio::{
     select,
-    sync::{oneshot, Mutex, Notify},
+    sync::Mutex,
     task::{JoinHandle, JoinSet},
 };
 use uuid::Uuid;
@@ -216,6 +215,10 @@ impl NetworkHandler {
             }),
             _ => None,
         };
+
+        if let Some(evt) = event {
+            let _ = self.events.send(evt).await;
+        }
     }
 
     async fn handle_command(&self, command: CommandWrapper) -> () {
@@ -390,7 +393,9 @@ impl NetworkHandler {
                 }
 
                 Ok(CommandResponse::UpdateRemotes)
-            }
+            },
+            Command::ListPeers => Ok(CommandResponse::ListPeers(self.peers.lock().await.iter().map(|(k, (_, v))| (k.clone(), v.clone())).collect())),
+            Command::GetPeer(id) => Ok(CommandResponse::GetPeer(self.peers.lock().await.get(&id).and_then(|(_, node)| Some(node.clone()))))
         };
 
         let _ = command.response_channel.send(result).await;
